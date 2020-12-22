@@ -300,8 +300,6 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 			continue
 		}
 
-		lastSequence = c.sequenceGetter(response.result[len(response.result)-1])
-
 		err := p.Publish(response.result)
 		if err != nil {
 			c.logger("p.Publish", err)
@@ -312,7 +310,9 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 			continue
 		}
 
-		err = c.repo.SaveLastSequence(p.GetID(), lastSequence)
+		newSequence := c.sequenceGetter(response.result[len(response.result)-1])
+
+		err = c.repo.SaveLastSequence(p.GetID(), newSequence)
 		if err != nil {
 			c.logger("repo.SaveLastSequence", err)
 			ok := sleepContext(ctx, c.errorTimeout)
@@ -321,8 +321,9 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 			}
 			continue
 		}
-	}
 
+		lastSequence = newSequence
+	}
 }
 
 func (c *Core) runLoop(ctx context.Context) {
