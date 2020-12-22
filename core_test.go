@@ -126,6 +126,8 @@ type testRepo struct {
 	saveLastSequenceCount      int
 	updateSequencesCount       int
 
+	getUnprocessedEventsLimit uint64
+
 	unprocessedEvents []Event
 	updatedEvents     []Event
 }
@@ -144,6 +146,7 @@ func (r *testRepo) GetEventsFromSequence(seq uint64, limit uint64) ([]Event, err
 
 func (r *testRepo) GetUnprocessedEvents(limit uint64) ([]Event, error) {
 	r.getUnprocessedEventsCount++
+	r.getUnprocessedEventsLimit = limit
 	return r.unprocessedEvents, nil
 }
 
@@ -225,6 +228,7 @@ func TestRunDBProcessor(t *testing.T) {
 
 	expected := &testRepo{
 		getUnprocessedEventsCount: 1,
+		getUnprocessedEventsLimit: 8,
 		updateSequencesCount:      1,
 		unprocessedEvents:         unprocessedEvents,
 		updatedEvents:             updatedEvents,
@@ -300,6 +304,7 @@ func TestRunDBProcessorWithLastEvents(t *testing.T) {
 
 	expected := &testRepo{
 		getUnprocessedEventsCount: 1,
+		getUnprocessedEventsLimit: 8,
 		updateSequencesCount:      1,
 		unprocessedEvents:         unprocessedEvents,
 		updatedEvents:             updatedEvents,

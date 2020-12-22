@@ -232,6 +232,68 @@ func (c *Core) runListener(ctx context.Context, lastEvents []Event) {
 	}
 }
 
+func (c *Core) runPublisher(ctx context.Context, p Publisher) {
+	var lastSequence uint64
+	for {
+		var err error
+		lastSequence, err = c.repo.GetLastSequence(p.GetID())
+		if err != nil {
+			// TODO logging
+			ok := sleepContext(ctx, c.errorTimeout)
+			if !ok {
+				return
+			}
+			continue
+		}
+		break
+	}
+
+	reservedEvents := make([]Event, 0, c.repoLimit)
+	ch := make(chan fetchResponse, 1)
+	for {
+		req := fetchRequest{
+			limit:        c.repoLimit,
+			fromSequence: lastSequence + 1,
+			result:       reservedEvents,
+			responseChan: ch,
+		}
+
+		c.fetch(req)
+
+		var response fetchResponse
+		select {
+		case res := <-ch:
+			response = res
+		case <-ctx.Done():
+			return
+		}
+
+		if !response.existed {
+			events, err := c.repo.GetEventsFromSequence(lastSequence+1, c.repoLimit)
+			if err != nil {
+				// TODO logging
+				ok := sleepContext(ctx, c.errorTimeout)
+				if !ok {
+					return
+				}
+				continue
+			}
+			response.result = events
+		}
+
+		err := p.Publish(response.result)
+		if err != nil {
+			// TODO logging
+			ok := sleepContext(ctx, c.errorTimeout)
+			if !ok {
+				return
+			}
+			continue
+		}
+	}
+
+}
+
 func (c *Core) runLoop(ctx context.Context) {
 	lastEvents, err := c.repo.GetLastEvents(c.repoLimit)
 	if err != nil {
@@ -274,7 +336,10 @@ func (c *Core) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		time.Sleep(c.errorTimeout)
+		ok := sleepContext(ctx, c.errorTimeout)
+		if !ok {
+			return
+		}
 	}
 }
 
@@ -285,4 +350,13 @@ func (c *Core) Signal() {
 
 func (c *Core) fetch(req fetchRequest) {
 	c.fetchChan <- req
+}
+
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-time.After(d):
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
