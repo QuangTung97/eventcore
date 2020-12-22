@@ -132,6 +132,10 @@ func (c *Core) runDBProcessor(ctx context.Context, lastEvents []Event) error {
 			return err
 		}
 
+		if len(events) == 0 {
+			continue
+		}
+
 		if uint64(len(events)) > c.repoLimit {
 			select {
 			case c.signalChan <- struct{}{}:
