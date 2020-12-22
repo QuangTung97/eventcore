@@ -185,7 +185,7 @@ func prepareFetchResponse(
 	last := top % bufferSize
 	first := req.fromSequence % bufferSize
 
-	if last >= first {
+	if last > first {
 		result = append(result, events[first:last]...)
 	} else {
 		result = append(result, events[first:]...)

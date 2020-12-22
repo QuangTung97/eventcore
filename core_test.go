@@ -108,6 +108,26 @@ func TestPrepareFetchResponse(t *testing.T) {
 				existed: false,
 			},
 		},
+		{
+			name: "all events",
+			events: []Event{
+				4, 5, 6, 7,
+			},
+			bufferSize:    4,
+			sequence:      7,
+			firstSequence: 1,
+			req: fetchRequest{
+				fromSequence: 4,
+				limit:        4,
+			},
+
+			expected: fetchResponse{
+				existed: true,
+				result: []Event{
+					4, 5, 6, 7,
+				},
+			},
+		},
 	}
 
 	for _, e := range table {
