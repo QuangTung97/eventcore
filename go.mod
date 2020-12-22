@@ -1,4 +1,4 @@
-module eventcore
+module github.com/QuangTung97/eventcore
 
 go 1.14
 
