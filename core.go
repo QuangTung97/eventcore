@@ -38,6 +38,9 @@ type Publisher interface {
 	Publish(events []Event) error
 }
 
+// ErrorLogger ...
+type ErrorLogger func(message string, err error)
+
 type fetchRequest struct {
 	limit        uint64
 	fromSequence uint64
@@ -65,6 +68,7 @@ type Core struct {
 	errorTimeout time.Duration
 
 	publishers []Publisher
+	logger     ErrorLogger
 }
 
 // NewCore ...
@@ -89,6 +93,7 @@ func NewCore(
 		errorTimeout: opts.errorTimeout,
 
 		publishers: opts.publishers,
+		logger:     opts.logger,
 	}
 }
 
@@ -238,7 +243,7 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 		var err error
 		lastSequence, err = c.repo.GetLastSequence(p.GetID())
 		if err != nil {
-			// TODO logging
+			c.logger("repo.GetLastSequence", err)
 			ok := sleepContext(ctx, c.errorTimeout)
 			if !ok {
 				return
@@ -271,7 +276,7 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 		if !response.existed {
 			events, err := c.repo.GetEventsFromSequence(lastSequence+1, c.repoLimit)
 			if err != nil {
-				// TODO logging
+				c.logger("repo.GetEventsFromSequence", err)
 				ok := sleepContext(ctx, c.errorTimeout)
 				if !ok {
 					return
@@ -283,7 +288,7 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 
 		err := p.Publish(response.result)
 		if err != nil {
-			// TODO logging
+			c.logger("p.Publish", err)
 			ok := sleepContext(ctx, c.errorTimeout)
 			if !ok {
 				return
@@ -297,7 +302,7 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 func (c *Core) runLoop(ctx context.Context) {
 	lastEvents, err := c.repo.GetLastEvents(c.repoLimit)
 	if err != nil {
-		// TODO logging error
+		c.logger("repo.GetLastEvents", err)
 		return
 	}
 
@@ -315,7 +320,7 @@ func (c *Core) runLoop(ctx context.Context) {
 			return
 		}
 		if err != nil {
-			// TODO logging
+			c.logger("c.runDBProcessor", err)
 			cancel()
 		}
 	}()

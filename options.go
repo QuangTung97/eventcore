@@ -11,12 +11,16 @@ type coreOpts struct {
 
 	publishers   []Publisher
 	errorTimeout time.Duration
+	logger       ErrorLogger
 }
 
 var defaultCoreOpts = &coreOpts{
-	repoLimit:    1000,
-	fetchLimit:   100,
+	repoLimit:  1000,
+	fetchLimit: 100,
+
 	errorTimeout: 1 * time.Minute,
+	logger: func(message string, err error) {
+	},
 }
 
 // AddPublisher ...
@@ -37,6 +41,13 @@ func WithRepositoryLimit(limit uint64) Option {
 func WithErrorTimeout(d time.Duration) Option {
 	return func(opts *coreOpts) {
 		opts.errorTimeout = d
+	}
+}
+
+// WithErrorLogger ...
+func WithErrorLogger(logger ErrorLogger) Option {
+	return func(opts *coreOpts) {
+		opts.logger = logger
 	}
 }
 
