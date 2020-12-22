@@ -366,6 +366,8 @@ func TestRunListener(t *testing.T) {
 		responseChan: ch2,
 	})
 
+	time.Sleep(10 * time.Millisecond)
+
 	core.listenChan <- testEvent{
 		sequence: 5,
 		num:      55,
