@@ -301,6 +301,16 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 			}
 			continue
 		}
+
+		err = c.repo.SaveLastSequence(p.GetID(), lastSequence)
+		if err != nil {
+			c.logger("repo.SaveLastSequence", err)
+			ok := sleepContext(ctx, c.errorTimeout)
+			if !ok {
+				return
+			}
+			continue
+		}
 	}
 
 }

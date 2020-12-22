@@ -18,6 +18,9 @@ type testPublishRepo struct {
 	getEventsFromSequenceLimit   uint64
 	getEventsFromSequenceOutputs [][]Event
 	getEventsFromSequenceErrs    []error
+
+	saveLastSequenceID     PublisherID
+	saveLastSequenceValues []uint64
 }
 
 var _ Repository = &testPublishRepo{}
@@ -44,7 +47,9 @@ func (r *testPublishRepo) GetLastSequence(id PublisherID) (uint64, error) {
 }
 
 func (r *testPublishRepo) SaveLastSequence(id PublisherID, seq uint64) error {
-	panic("SaveLastSequence")
+	r.saveLastSequenceID = id
+	r.saveLastSequenceValues = append(r.saveLastSequenceValues, seq)
+	return nil
 }
 
 func (r *testPublishRepo) UpdateSequences([]Event) error {
@@ -129,6 +134,9 @@ func TestPublisher_GetLastSequence(t *testing.T) {
 		testEvent{sequence: 125, num: 25},
 		testEvent{sequence: 126, num: 26},
 	}, p.inputs[1])
+
+	assert.Equal(t, PublisherID(12), repo.saveLastSequenceID)
+	assert.Equal(t, []uint64{124, 126}, repo.saveLastSequenceValues)
 
 	cancel()
 	wg.Wait()
@@ -252,4 +260,7 @@ func TestPublisher_NotExisted(t *testing.T) {
 	}, p.inputs)
 	assert.Equal(t, []uint64{123}, repo.getEventsFromSequenceInputs)
 	assert.Equal(t, uint64(8), repo.getEventsFromSequenceLimit)
+
+	assert.Equal(t, PublisherID(12), repo.saveLastSequenceID)
+	assert.Equal(t, []uint64{124, 126}, repo.saveLastSequenceValues)
 }
