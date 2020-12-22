@@ -127,9 +127,19 @@ func (c *Core) runDBProcessor(ctx context.Context, lastEvents []Event) error {
 			}
 		}
 
-		events, err := c.repo.GetUnprocessedEvents(c.repoLimit)
+		events, err := c.repo.GetUnprocessedEvents(c.repoLimit + 1)
 		if err != nil {
 			return err
+		}
+
+		if uint64(len(events)) > c.repoLimit {
+			select {
+			case c.signalChan <- struct{}{}:
+				break
+			default:
+				break
+			}
+			events = events[:c.repoLimit]
 		}
 
 		for i := range events {

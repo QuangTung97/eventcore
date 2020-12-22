@@ -232,7 +232,7 @@ func TestRunDBProcessor(t *testing.T) {
 
 	expected := &testRepo{
 		getUnprocessedEventsCount: 1,
-		getUnprocessedEventsLimit: 8,
+		getUnprocessedEventsLimit: 9,
 		updateSequencesCount:      1,
 		unprocessedEvents:         unprocessedEvents,
 		updatedEvents:             updatedEvents,
@@ -301,7 +301,7 @@ func TestRunDBProcessorWithLastEvents(t *testing.T) {
 
 	expected := &testRepo{
 		getUnprocessedEventsCount: 1,
-		getUnprocessedEventsLimit: 8,
+		getUnprocessedEventsLimit: 9,
 		updateSequencesCount:      1,
 		unprocessedEvents:         unprocessedEvents,
 		updatedEvents:             updatedEvents,

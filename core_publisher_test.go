@@ -125,6 +125,9 @@ func TestPublisher_GetLastSequence(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
+	cancel()
+	wg.Wait()
+
 	assert.Equal(t, []PublisherID{12}, repo.getLastSequenceInputs)
 	assert.Equal(t, []Event{
 		testEvent{sequence: 123, num: 1123},
@@ -137,10 +140,6 @@ func TestPublisher_GetLastSequence(t *testing.T) {
 
 	assert.Equal(t, PublisherID(12), repo.saveLastSequenceID)
 	assert.Equal(t, []uint64{124, 126}, repo.saveLastSequenceValues)
-
-	cancel()
-	wg.Wait()
-
 }
 
 func TestPublisher_GetLastSequenceError(t *testing.T) {
