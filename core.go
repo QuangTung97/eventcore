@@ -336,7 +336,7 @@ func (c *Core) runLoop(ctx context.Context) {
 	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(2 + len(c.publishers))
 
 	go func() {
 		defer wg.Done()
@@ -356,6 +356,16 @@ func (c *Core) runLoop(ctx context.Context) {
 
 		c.runListener(ctx, lastEvents)
 	}()
+
+	for _, p := range c.publishers {
+		publisher := p
+
+		go func() {
+			defer wg.Done()
+
+			c.runPublisher(ctx, publisher)
+		}()
+	}
 
 	wg.Wait()
 }
