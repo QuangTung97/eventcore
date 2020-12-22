@@ -171,6 +171,17 @@ type testEvent struct {
 	num      int
 }
 
+func getSequence(e Event) uint64 {
+	return e.(testEvent).sequence
+}
+
+func setSequence(e Event, seq uint64) Event {
+	return testEvent{
+		sequence: seq,
+		num:      e.(testEvent).num,
+	}
+}
+
 func TestRunDBProcessor(t *testing.T) {
 	unprocessedEvents := []Event{
 		testEvent{num: 20},
@@ -182,14 +193,7 @@ func TestRunDBProcessor(t *testing.T) {
 		unprocessedEvents: unprocessedEvents,
 	}
 	core := NewCore(repo,
-		func(e Event, seq uint64) Event {
-			event := e.(testEvent)
-			event.sequence = seq
-			return event
-		},
-		func(e Event) uint64 {
-			return e.(testEvent).sequence
-		},
+		setSequence, getSequence,
 		WithErrorTimeout(100*time.Millisecond),
 		WithRepositoryLimit(8),
 	)
@@ -255,14 +259,7 @@ func TestRunDBProcessorWithLastEvents(t *testing.T) {
 		unprocessedEvents: unprocessedEvents,
 	}
 	core := NewCore(repo,
-		func(e Event, seq uint64) Event {
-			event := e.(testEvent)
-			event.sequence = seq
-			return event
-		},
-		func(e Event) uint64 {
-			return e.(testEvent).sequence
-		},
+		setSequence, getSequence,
 		WithErrorTimeout(25*time.Millisecond),
 		WithRepositoryLimit(8),
 	)
@@ -323,14 +320,7 @@ func TestRunDBProcessorWithLastEvents(t *testing.T) {
 func TestRunListener(t *testing.T) {
 	repo := &testRepo{}
 	core := NewCore(repo,
-		func(e Event, seq uint64) Event {
-			event := e.(testEvent)
-			event.sequence = seq
-			return event
-		},
-		func(e Event) uint64 {
-			return e.(testEvent).sequence
-		},
+		setSequence, getSequence,
 		WithErrorTimeout(25*time.Millisecond),
 		WithRepositoryLimit(8),
 	)

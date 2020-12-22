@@ -286,6 +286,12 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 			response.result = events
 		}
 
+		if len(response.result) == 0 {
+			continue
+		}
+
+		lastSequence = c.sequenceGetter(response.result[len(response.result)-1])
+
 		err := p.Publish(response.result)
 		if err != nil {
 			c.logger("p.Publish", err)
