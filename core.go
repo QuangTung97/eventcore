@@ -38,6 +38,19 @@ type Publisher interface {
 	Publish(events []Event) error
 }
 
+// CommittedEvent ...
+type CommittedEvent struct {
+	Sequence uint64
+	Error    error
+}
+
+// AsyncPublisher ...
+type AsyncPublisher interface {
+	GetID() PublisherID
+	Publish(events []Event) error
+	GetCommitChannel() chan CommittedEvent
+}
+
 // ErrorLogger ...
 type ErrorLogger func(message string, err error)
 
@@ -67,8 +80,10 @@ type Core struct {
 	repoLimit    uint64
 	errorTimeout time.Duration
 
-	publishers []Publisher
-	logger     ErrorLogger
+	publishers      []Publisher
+	asyncPublishers []AsyncPublisher
+
+	logger ErrorLogger
 }
 
 // NewCore ...
@@ -92,8 +107,10 @@ func NewCore(
 		repoLimit:    opts.repoLimit,
 		errorTimeout: opts.errorTimeout,
 
-		publishers: opts.publishers,
-		logger:     opts.logger,
+		publishers:      opts.publishers,
+		asyncPublishers: opts.asyncPublishers,
+
+		logger: opts.logger,
 	}
 }
 
@@ -258,8 +275,8 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 		lastSequence, err = c.repo.GetLastSequence(p.GetID())
 		if err != nil {
 			c.logger("repo.GetLastSequence", err)
-			ok := sleepContext(ctx, c.errorTimeout)
-			if !ok {
+			sleepContext(ctx, c.errorTimeout)
+			if ctx.Err() != nil {
 				return
 			}
 			continue
@@ -291,8 +308,8 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 			events, err := c.repo.GetEventsFromSequence(lastSequence+1, c.repoLimit)
 			if err != nil {
 				c.logger("repo.GetEventsFromSequence", err)
-				ok := sleepContext(ctx, c.errorTimeout)
-				if !ok {
+				sleepContext(ctx, c.errorTimeout)
+				if ctx.Err() != nil {
 					return
 				}
 				continue
@@ -307,8 +324,8 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 		err := p.Publish(response.result)
 		if err != nil {
 			c.logger("p.Publish", err)
-			ok := sleepContext(ctx, c.errorTimeout)
-			if !ok {
+			sleepContext(ctx, c.errorTimeout)
+			if ctx.Err() != nil {
 				return
 			}
 			continue
@@ -319,14 +336,157 @@ func (c *Core) runPublisher(ctx context.Context, p Publisher) {
 		err = c.repo.SaveLastSequence(p.GetID(), newSequence)
 		if err != nil {
 			c.logger("repo.SaveLastSequence", err)
-			ok := sleepContext(ctx, c.errorTimeout)
-			if !ok {
+			sleepContext(ctx, c.errorTimeout)
+			if ctx.Err() != nil {
 				return
 			}
 			continue
 		}
 
 		lastSequence = newSequence
+	}
+}
+
+func (c *Core) runAsyncPublishing(ctx context.Context, p AsyncPublisher, lastSequence uint64) {
+	reservedEvents := make([]Event, 0, c.repoLimit)
+	ch := make(chan fetchResponse, 1)
+	for {
+		req := fetchRequest{
+			limit:        c.repoLimit,
+			fromSequence: lastSequence + 1,
+			result:       reservedEvents,
+			responseChan: ch,
+		}
+
+		c.fetch(req)
+
+		var response fetchResponse
+		select {
+		case res := <-ch:
+			response = res
+		case <-ctx.Done():
+			return
+		}
+
+		if !response.existed {
+			events, err := c.repo.GetEventsFromSequence(lastSequence+1, c.repoLimit)
+			if err != nil {
+				c.logger("repo.GetEventsFromSequence", err)
+				sleepContext(ctx, c.errorTimeout)
+				if ctx.Err() != nil {
+					return
+				}
+				continue
+			}
+			response.result = events
+		}
+
+		if len(response.result) == 0 {
+			continue
+		}
+
+		err := p.Publish(response.result)
+		if err != nil {
+			c.logger("p.Publish", err)
+			return
+		}
+
+		lastSequence = c.sequenceGetter(response.result[len(response.result)-1])
+	}
+}
+
+func (c *Core) runAsyncCommitting(ctx context.Context, p AsyncPublisher) {
+	ch := p.GetCommitChannel()
+
+	var commit CommittedEvent
+	for {
+		select {
+		case first := <-ch:
+			commit = first
+		case <-ctx.Done():
+			return
+		}
+
+	DrainLoop:
+		for {
+			select {
+			case e := <-ch:
+				commit = e
+			case <-ctx.Done():
+				return
+			default:
+				break DrainLoop
+			}
+		}
+
+		if commit.Error != nil {
+			c.logger("Commit channel", commit.Error)
+			return
+		}
+
+		err := c.repo.SaveLastSequence(p.GetID(), commit.Sequence)
+		if err != nil {
+			c.logger("repo.SaveLastSequence", err)
+			return
+		}
+	}
+}
+
+func (c *Core) runAsyncPublisherLoop(ctx context.Context, p AsyncPublisher) {
+	var lastSequence uint64
+	for {
+		var err error
+		lastSequence, err = c.repo.GetLastSequence(p.GetID())
+		if err != nil {
+			c.logger("repo.GetLastSequence", err)
+			sleepContext(ctx, c.errorTimeout)
+			if ctx.Err() != nil {
+				return
+			}
+			continue
+		}
+		break
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		defer wg.Done()
+
+		c.runAsyncPublishing(ctx, p, lastSequence)
+		if ctx.Err() == nil {
+			cancel()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		c.runAsyncCommitting(ctx, p)
+		if ctx.Err() == nil {
+			cancel()
+		}
+	}()
+
+	wg.Wait()
+}
+
+func (c *Core) runAsyncPublisher(ctx context.Context, p AsyncPublisher) {
+	for {
+		c.runAsyncPublisherLoop(ctx, p)
+		if ctx.Err() != nil {
+			return
+		}
+
+		sleepContext(ctx, c.errorTimeout)
+		if ctx.Err() != nil {
+			return
+		}
+		return
 	}
 }
 
@@ -341,7 +501,7 @@ func (c *Core) runLoop(ctx context.Context) {
 	defer cancel()
 
 	var wg sync.WaitGroup
-	wg.Add(2 + len(c.publishers))
+	wg.Add(2 + len(c.publishers) + len(c.asyncPublishers))
 
 	go func() {
 		defer wg.Done()
@@ -372,6 +532,15 @@ func (c *Core) runLoop(ctx context.Context) {
 		}()
 	}
 
+	for _, p := range c.asyncPublishers {
+		publisher := p
+		go func() {
+			defer wg.Done()
+
+			c.runAsyncPublisher(ctx, publisher)
+		}()
+	}
+
 	wg.Wait()
 }
 
@@ -382,8 +551,8 @@ func (c *Core) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		ok := sleepContext(ctx, c.errorTimeout)
-		if !ok {
+		sleepContext(ctx, c.errorTimeout)
+		if ctx.Err() != nil {
 			return
 		}
 	}
@@ -398,11 +567,11 @@ func (c *Core) fetch(req fetchRequest) {
 	c.fetchChan <- req
 }
 
-func sleepContext(ctx context.Context, d time.Duration) bool {
+func sleepContext(ctx context.Context, d time.Duration) {
 	select {
 	case <-time.After(d):
-		return true
+		return
 	case <-ctx.Done():
-		return false
+		return
 	}
 }

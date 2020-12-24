@@ -9,7 +9,9 @@ type coreOpts struct {
 	repoLimit  uint64
 	fetchLimit uint64
 
-	publishers   []Publisher
+	publishers      []Publisher
+	asyncPublishers []AsyncPublisher
+
 	errorTimeout time.Duration
 	logger       ErrorLogger
 }
@@ -27,6 +29,13 @@ var defaultCoreOpts = &coreOpts{
 func AddPublisher(p Publisher) Option {
 	return func(opts *coreOpts) {
 		opts.publishers = append(opts.publishers, p)
+	}
+}
+
+// AddAsyncPublisher ...
+func AddAsyncPublisher(p AsyncPublisher) Option {
+	return func(opts *coreOpts) {
+		opts.asyncPublishers = append(opts.asyncPublishers, p)
 	}
 }
 
