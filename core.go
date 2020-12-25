@@ -93,7 +93,7 @@ func NewCore(
 	options ...Option,
 ) *Core {
 	opts := defaultCoreOpts
-	applyOptions(opts, options...)
+	applyOptions(&opts, options...)
 
 	return &Core{
 		repo:           repo,

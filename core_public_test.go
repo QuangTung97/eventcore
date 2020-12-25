@@ -47,8 +47,8 @@ type testRepo struct {
 	getLastSequenceInputs  []eventcore.PublisherID
 	getLastSequenceOutputs []getLastSequenceOutput
 
-	saveLastInputs  []saveLastSequenceInput
-	saveLastOutputs []error
+	saveLastInput  saveLastSequenceInput
+	saveLastOutput error
 
 	updateInputs  []updateSeqInput
 	updateOutputs []error
@@ -87,13 +87,11 @@ func (r *testRepo) GetLastSequence(id eventcore.PublisherID) (uint64, error) {
 }
 
 func (r *testRepo) SaveLastSequence(id eventcore.PublisherID, seq uint64) error {
-	index := len(r.saveLastInputs)
-	r.saveLastInputs = append(r.saveLastInputs, saveLastSequenceInput{
+	r.saveLastInput = saveLastSequenceInput{
 		id:  id,
 		seq: seq,
-	})
-	err := r.saveLastOutputs[index]
-	return err
+	}
+	return r.saveLastOutput
 }
 
 func (r *testRepo) UpdateSequences(events []eventcore.Event) error {
@@ -129,6 +127,45 @@ type testLogger struct {
 func (l *testLogger) logError(msg string, err error) {
 	l.messages = append(l.messages, msg)
 	l.errs = append(l.errs, err)
+}
+
+type testPublisher struct {
+	id              eventcore.PublisherID
+	publishedEvents []eventcore.Event
+	publishOutput   error
+}
+
+var _ eventcore.Publisher = &testPublisher{}
+
+func (p *testPublisher) GetID() eventcore.PublisherID {
+	return p.id
+}
+
+func (p *testPublisher) Publish(events []eventcore.Event) error {
+	p.publishedEvents = append(p.publishedEvents, events...)
+	return p.publishOutput
+}
+
+type testAsyncPublisher struct {
+	id              eventcore.PublisherID
+	publishedEvents []eventcore.Event
+	publishOutput   error
+	ch              chan eventcore.CommittedEvent
+}
+
+var _ eventcore.AsyncPublisher = &testAsyncPublisher{}
+
+func (p *testAsyncPublisher) GetID() eventcore.PublisherID {
+	return p.id
+}
+
+func (p *testAsyncPublisher) Publish(events []eventcore.Event) error {
+	p.publishedEvents = append(p.publishedEvents, events...)
+	return p.publishOutput
+}
+
+func (p *testAsyncPublisher) GetCommitChannel() chan eventcore.CommittedEvent {
+	return p.ch
 }
 
 func TestCore_RunNoSignal(t *testing.T) {
@@ -533,4 +570,267 @@ func TestCore_RunGetUnprocessedEmpty(t *testing.T) {
 		updateOutputs: repo.updateOutputs,
 	}, repo)
 	assert.Equal(t, &testLogger{}, logger)
+}
+
+func TestCore_RunPublisher(t *testing.T) {
+	repo := &testRepo{
+		getLastOutputs: []getOutput{
+			{
+				events: nil,
+				err:    nil,
+			},
+		},
+		getUnprocessedOutputs: []getOutput{
+			{
+				events: []eventcore.Event{
+					testEvent{sequence: 0, num: 101},
+					testEvent{sequence: 0, num: 102},
+					testEvent{sequence: 0, num: 103},
+					testEvent{sequence: 0, num: 104},
+					testEvent{sequence: 0, num: 105},
+				},
+				err: nil,
+			},
+		},
+		updateOutputs: []error{nil},
+		getLastSequenceOutputs: []getLastSequenceOutput{
+			{
+				sequence: 0,
+				err:      nil,
+			},
+		},
+		saveLastOutput: nil,
+	}
+
+	logger := &testLogger{}
+
+	publisher := &testPublisher{
+		id:            222,
+		publishOutput: nil,
+	}
+
+	core := eventcore.NewCore(repo,
+		setSequence, getSequence,
+		eventcore.WithErrorLogger(logger.logError),
+		eventcore.WithRepositoryLimit(8),
+		eventcore.WithErrorTimeout(50*time.Millisecond),
+		eventcore.AddPublisher(publisher),
+	)
+
+	var wg sync.WaitGroup
+
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		core.Run(ctx)
+	}()
+
+	core.Signal()
+	time.Sleep(10 * time.Millisecond)
+
+	cancel()
+	wg.Wait()
+
+	assert.Equal(t, &testRepo{
+		getLastInputs:  []uint64{8},
+		getLastOutputs: repo.getLastOutputs,
+
+		getUnprocessedOutputs: repo.getUnprocessedOutputs,
+		getUnprocessedInputs:  []uint64{9},
+
+		updateInputs: []updateSeqInput{
+			{
+				events: []eventcore.Event{
+					testEvent{sequence: 1, num: 101},
+					testEvent{sequence: 2, num: 102},
+					testEvent{sequence: 3, num: 103},
+					testEvent{sequence: 4, num: 104},
+					testEvent{sequence: 5, num: 105},
+				},
+			},
+		},
+		updateOutputs: repo.updateOutputs,
+
+		getLastSequenceInputs: []eventcore.PublisherID{
+			222,
+		},
+		getLastSequenceOutputs: repo.getLastSequenceOutputs,
+
+		saveLastInput: saveLastSequenceInput{
+			id:  222,
+			seq: 5,
+		},
+		saveLastOutput: repo.saveLastOutput,
+	}, repo)
+
+	assert.Equal(t, &testLogger{}, logger)
+
+	assert.Equal(t, &testPublisher{
+		id:            publisher.id,
+		publishOutput: publisher.publishOutput,
+		publishedEvents: []eventcore.Event{
+			testEvent{
+				sequence: 1,
+				num:      101,
+			},
+			testEvent{
+				sequence: 2,
+				num:      102,
+			},
+			testEvent{
+				sequence: 3,
+				num:      103,
+			},
+			testEvent{
+				sequence: 4,
+				num:      104,
+			},
+			testEvent{
+				sequence: 5,
+				num:      105,
+			},
+		},
+	}, publisher)
+}
+
+func TestCore_RunAsyncPublisher(t *testing.T) {
+	repo := &testRepo{
+		getLastOutputs: []getOutput{
+			{
+				events: nil,
+				err:    nil,
+			},
+		},
+		getUnprocessedOutputs: []getOutput{
+			{
+				events: []eventcore.Event{
+					testEvent{sequence: 0, num: 101},
+					testEvent{sequence: 0, num: 102},
+					testEvent{sequence: 0, num: 103},
+					testEvent{sequence: 0, num: 104},
+					testEvent{sequence: 0, num: 105},
+				},
+				err: nil,
+			},
+		},
+		updateOutputs: []error{nil},
+		getLastSequenceOutputs: []getLastSequenceOutput{
+			{
+				sequence: 0,
+				err:      nil,
+			},
+		},
+		saveLastOutput: nil,
+	}
+
+	logger := &testLogger{}
+
+	publisher := &testAsyncPublisher{
+		id:            333,
+		publishOutput: nil,
+		ch:            make(chan eventcore.CommittedEvent),
+	}
+
+	core := eventcore.NewCore(repo,
+		setSequence, getSequence,
+		eventcore.WithErrorLogger(logger.logError),
+		eventcore.WithRepositoryLimit(8),
+		eventcore.WithErrorTimeout(50*time.Millisecond),
+		eventcore.AddAsyncPublisher(publisher),
+	)
+
+	var wg sync.WaitGroup
+
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		core.Run(ctx)
+	}()
+
+	core.Signal()
+	time.Sleep(10 * time.Millisecond)
+
+	publisher.ch <- eventcore.CommittedEvent{
+		Sequence: 5,
+		Error:    nil,
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	cancel()
+	wg.Wait()
+
+	assert.Equal(t, &testRepo{
+		getLastInputs:  []uint64{8},
+		getLastOutputs: repo.getLastOutputs,
+
+		getUnprocessedOutputs: repo.getUnprocessedOutputs,
+		getUnprocessedInputs:  []uint64{9},
+
+		updateInputs: []updateSeqInput{
+			{
+				events: []eventcore.Event{
+					testEvent{sequence: 1, num: 101},
+					testEvent{sequence: 2, num: 102},
+					testEvent{sequence: 3, num: 103},
+					testEvent{sequence: 4, num: 104},
+					testEvent{sequence: 5, num: 105},
+				},
+			},
+		},
+		updateOutputs: repo.updateOutputs,
+
+		getLastSequenceInputs: []eventcore.PublisherID{
+			333,
+		},
+		getLastSequenceOutputs: repo.getLastSequenceOutputs,
+
+		saveLastInput: saveLastSequenceInput{
+			id:  333,
+			seq: 5,
+		},
+		saveLastOutput: repo.saveLastOutput,
+	}, repo)
+
+	assert.Equal(t, &testLogger{}, logger)
+
+	assert.Equal(t, &testAsyncPublisher{
+		id:            publisher.id,
+		ch:            publisher.ch,
+		publishOutput: publisher.publishOutput,
+		publishedEvents: []eventcore.Event{
+			testEvent{
+				sequence: 1,
+				num:      101,
+			},
+			testEvent{
+				sequence: 2,
+				num:      102,
+			},
+			testEvent{
+				sequence: 3,
+				num:      103,
+			},
+			testEvent{
+				sequence: 4,
+				num:      104,
+			},
+			testEvent{
+				sequence: 5,
+				num:      105,
+			},
+		},
+	}, publisher)
 }

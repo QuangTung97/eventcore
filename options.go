@@ -16,7 +16,7 @@ type coreOpts struct {
 	logger       ErrorLogger
 }
 
-var defaultCoreOpts = &coreOpts{
+var defaultCoreOpts = coreOpts{
 	repoLimit:  1000,
 	fetchLimit: 100,
 
