@@ -47,8 +47,9 @@ type testRepo struct {
 	getLastSequenceInputs  []eventcore.PublisherID
 	getLastSequenceOutputs []getLastSequenceOutput
 
-	saveLastInput  saveLastSequenceInput
-	saveLastOutput error
+	saveLastSequenceCalled bool
+	saveLastInput          saveLastSequenceInput
+	saveLastOutput         error
 
 	updateInputs  []updateSeqInput
 	updateOutputs []error
@@ -91,6 +92,7 @@ func (r *testRepo) SaveLastSequence(id eventcore.PublisherID, seq uint64) error 
 		id:  id,
 		seq: seq,
 	}
+	r.saveLastSequenceCalled = true
 	return r.saveLastOutput
 }
 
@@ -666,7 +668,8 @@ func TestCore_RunPublisher(t *testing.T) {
 			id:  222,
 			seq: 5,
 		},
-		saveLastOutput: repo.saveLastOutput,
+		saveLastSequenceCalled: true,
+		saveLastOutput:         repo.saveLastOutput,
 	}, repo)
 
 	assert.Equal(t, &testLogger{}, logger)
@@ -801,10 +804,151 @@ func TestCore_RunAsyncPublisher(t *testing.T) {
 			id:  333,
 			seq: 5,
 		},
-		saveLastOutput: repo.saveLastOutput,
+		saveLastSequenceCalled: true,
+		saveLastOutput:         repo.saveLastOutput,
 	}, repo)
 
 	assert.Equal(t, &testLogger{}, logger)
+
+	assert.Equal(t, &testAsyncPublisher{
+		id:            publisher.id,
+		ch:            publisher.ch,
+		publishOutput: publisher.publishOutput,
+		publishedEvents: []eventcore.Event{
+			testEvent{
+				sequence: 1,
+				num:      101,
+			},
+			testEvent{
+				sequence: 2,
+				num:      102,
+			},
+			testEvent{
+				sequence: 3,
+				num:      103,
+			},
+			testEvent{
+				sequence: 4,
+				num:      104,
+			},
+			testEvent{
+				sequence: 5,
+				num:      105,
+			},
+		},
+	}, publisher)
+}
+
+func TestCore_RunAsyncPublisher_CommitError(t *testing.T) {
+	repo := &testRepo{
+		getLastOutputs: []getOutput{
+			{
+				events: nil,
+				err:    nil,
+			},
+		},
+		getUnprocessedOutputs: []getOutput{
+			{
+				events: []eventcore.Event{
+					testEvent{sequence: 0, num: 101},
+					testEvent{sequence: 0, num: 102},
+					testEvent{sequence: 0, num: 103},
+					testEvent{sequence: 0, num: 104},
+					testEvent{sequence: 0, num: 105},
+				},
+				err: nil,
+			},
+		},
+		updateOutputs: []error{nil},
+		getLastSequenceOutputs: []getLastSequenceOutput{
+			{
+				sequence: 0,
+				err:      nil,
+			},
+		},
+		saveLastOutput: nil,
+	}
+
+	logger := &testLogger{}
+
+	publisher := &testAsyncPublisher{
+		id:            333,
+		publishOutput: nil,
+		ch:            make(chan eventcore.CommittedEvent),
+	}
+
+	core := eventcore.NewCore(repo,
+		setSequence, getSequence,
+		eventcore.WithErrorLogger(logger.logError),
+		eventcore.WithRepositoryLimit(8),
+		eventcore.WithErrorTimeout(50*time.Millisecond),
+		eventcore.AddAsyncPublisher(publisher),
+	)
+
+	var wg sync.WaitGroup
+
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		core.Run(ctx)
+	}()
+
+	core.Signal()
+	time.Sleep(10 * time.Millisecond)
+
+	publisher.ch <- eventcore.CommittedEvent{
+		Sequence: 0,
+		Error:    errors.New("some commit error"),
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	cancel()
+	wg.Wait()
+
+	assert.Equal(t, &testRepo{
+		getLastInputs:  []uint64{8},
+		getLastOutputs: repo.getLastOutputs,
+
+		getUnprocessedOutputs: repo.getUnprocessedOutputs,
+		getUnprocessedInputs:  []uint64{9},
+
+		updateInputs: []updateSeqInput{
+			{
+				events: []eventcore.Event{
+					testEvent{sequence: 1, num: 101},
+					testEvent{sequence: 2, num: 102},
+					testEvent{sequence: 3, num: 103},
+					testEvent{sequence: 4, num: 104},
+					testEvent{sequence: 5, num: 105},
+				},
+			},
+		},
+		updateOutputs: repo.updateOutputs,
+
+		getLastSequenceInputs: []eventcore.PublisherID{
+			333,
+		},
+		getLastSequenceOutputs: repo.getLastSequenceOutputs,
+
+		saveLastInput: saveLastSequenceInput{
+			id:  0,
+			seq: 0,
+		},
+		saveLastSequenceCalled: false,
+		saveLastOutput:         repo.saveLastOutput,
+	}, repo)
+
+	assert.Equal(t, &testLogger{
+		messages: []string{"Commit channel"},
+		errs:     []error{errors.New("some commit error")},
+	}, logger)
 
 	assert.Equal(t, &testAsyncPublisher{
 		id:            publisher.id,
