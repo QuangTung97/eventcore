@@ -486,7 +486,6 @@ func (c *Core) runAsyncPublisher(ctx context.Context, p AsyncPublisher) {
 		if ctx.Err() != nil {
 			return
 		}
-		return
 	}
 }
 
