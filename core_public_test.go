@@ -161,7 +161,7 @@ func (p *testAsyncPublisher) GetID() eventcore.PublisherID {
 	return p.id
 }
 
-func (p *testAsyncPublisher) Publish(events []eventcore.Event) error {
+func (p *testAsyncPublisher) PublishAsync(events []eventcore.Event) error {
 	p.publishedEvents = append(p.publishedEvents, events...)
 	return p.publishOutput
 }

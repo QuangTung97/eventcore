@@ -47,7 +47,7 @@ type CommittedEvent struct {
 // AsyncPublisher ...
 type AsyncPublisher interface {
 	GetID() PublisherID
-	Publish(events []Event) error
+	PublishAsync(events []Event) error
 	GetCommitChannel() chan CommittedEvent
 }
 
@@ -385,7 +385,7 @@ func (c *Core) runAsyncPublishing(ctx context.Context, p AsyncPublisher, lastSeq
 			continue
 		}
 
-		err := p.Publish(response.result)
+		err := p.PublishAsync(response.result)
 		if err != nil {
 			c.logger("p.Publish", err)
 			return
