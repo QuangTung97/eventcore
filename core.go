@@ -51,6 +51,14 @@ type AsyncPublisher interface {
 	GetCommitChannel() chan CommittedEvent
 }
 
+// Observer ...
+type Observer struct {
+	sequence       uint64
+	core           *Core
+	reservedEvents []Event
+	responseChan   chan fetchResponse
+}
+
 // ErrorLogger ...
 type ErrorLogger func(message string, err error)
 
@@ -564,6 +572,58 @@ func (c *Core) Signal() {
 
 func (c *Core) fetch(req fetchRequest) {
 	c.fetchChan <- req
+}
+
+// NewObserver ...
+func (c *Core) NewObserver(fromSequence uint64) *Observer {
+	return &Observer{
+		sequence:       fromSequence - 1,
+		core:           c,
+		reservedEvents: make([]Event, 0, c.repoLimit),
+		responseChan:   make(chan fetchResponse, 1),
+	}
+}
+
+// GetNextEvents ...
+func (o *Observer) GetNextEvents(ctx context.Context) []Event {
+	for {
+		req := fetchRequest{
+			limit:        o.core.repoLimit,
+			fromSequence: o.sequence + 1,
+			result:       o.reservedEvents,
+			responseChan: o.responseChan,
+		}
+
+		o.core.fetch(req)
+
+		var response fetchResponse
+		select {
+		case res := <-o.responseChan:
+			response = res
+		case <-ctx.Done():
+			return nil
+		}
+
+		if !response.existed {
+			events, err := o.core.repo.GetEventsFromSequence(o.sequence+1, o.core.repoLimit)
+			if err != nil {
+				o.core.logger("repo.GetEventsFromSequence", err)
+				sleepContext(ctx, o.core.errorTimeout)
+				if ctx.Err() != nil {
+					return nil
+				}
+				continue
+			}
+			response.result = events
+		}
+
+		if len(response.result) == 0 {
+			return nil
+		}
+
+		o.sequence = o.core.sequenceGetter(response.result[len(response.result)-1])
+		return response.result
+	}
 }
 
 func sleepContext(ctx context.Context, d time.Duration) {
